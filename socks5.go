@@ -1,17 +1,24 @@
 package main
 
 import (
-	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"time"
 )
 
 func main() {
-	listen, err := net.Listen("tcp", "0.0.0.0:10000")
+	port := "10000" // default
+	if len(os.Args) >= 2 {
+		port = os.Args[1]
+	} else {
+		fmt.Print("Usage: " + os.Args[0] + " <port>\nOn default port " + port + "\n")
+	}
+	listen, err := net.Listen("tcp", "0.0.0.0:"+port)
 	if err != nil {
 		fmt.Printf("listen failed, error code = %v\n", err)
 		return
@@ -23,29 +30,36 @@ func main() {
 			fmt.Printf("accept failed, error code = %v\n", err)
 			continue
 		}
-		go process(conn)
+		go start_connection(conn)
 	}
 }
 
-func process(conn net.Conn) {
-	reader := bufio.NewReader(conn)
-	var buf [260]byte
-	n, err := reader.Read(buf[:])
+func start_connection(conn net.Conn) {
+	defer conn.Close()
+	server, err := hand_shake(conn)
 	if err != nil {
-		fmt.Printf("read from connect failed, error code = %v\n", err)
 		return
 	}
-	recv := string(buf[:n])
+	defer server.Close()
+	go io.CopyBuffer(server, conn, make([]byte, 1024))
+	io.CopyBuffer(conn, server, make([]byte, 1024))
+}
 
-	if recv[0] != 0x05 || recv[1] == 0 {
-		fmt.Print("version is wrong or nMethods is 0\n")
-		conn.Close()
-		return
+func hand_shake(conn net.Conn) (sever net.Conn, err error) {
+	var buf [260]byte
+	n, err := conn.Read(buf[:])
+	if err != nil {
+		return nil, errors.New("read from connect failed, code: " + err.Error())
 	}
-
+	if buf[0] != 0x05 || buf[1] == 0 {
+		return nil, errors.New("version is wrong or nMethods is 0")
+	}
 	conn.Write([]byte{0x05, 0x00}) // 不需要认证
 
-	n, err = reader.Read(buf[:])
+	n, err = conn.Read(buf[:])
+	if err != nil {
+		return nil, errors.New("read from connect failed, code: " + err.Error())
+	}
 
 	port := binary.BigEndian.Uint16(buf[n-2 : n])
 	addr := ""
@@ -68,32 +82,21 @@ func process(conn net.Conn) {
 		break
 	}
 
-	fmt.Printf("%v: %v\n", time.Now().Format(time.RFC3339), addr)
-	defer fmt.Print("close\n")
+	fmt.Printf("[%v] %v\n", time.Now().Format("15:04:05.000"), addr)
 
 	d := net.Dialer{Timeout: time.Duration(5) * time.Second}
 	server, err := d.Dial("tcp", addr)
 	if err != nil {
 		conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-		conn.Close()
-		return
+		return nil, errors.New("dial failed, code: " + err.Error())
 	}
 
 	localIP_str, localPort_str, err := net.SplitHostPort(server.LocalAddr().String())
 	localIP := net.ParseIP(localIP_str)
 	localPort, _ := strconv.Atoi(localPort_str)
 
-	var ATYP byte = 0x01
-	if len(localIP) == 16 {
-		ATYP = 0x04
-	}
-	res := []byte{0x05, 0x00, 0x00, ATYP}
+	res := []byte{0x05, 0x00, 0x00, 0x04}
 	res = append(res, localIP...)
 	conn.Write(binary.BigEndian.AppendUint16(res, uint16(localPort)))
-	go func() {
-		defer server.Close()
-		defer conn.Close()
-		io.CopyBuffer(server, conn, make([]byte, 1024))
-	}()
-	io.CopyBuffer(conn, server, make([]byte, 1024))
+	return server, nil
 }
