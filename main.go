@@ -13,14 +13,16 @@ func main() {
 	} else {
 		fmt.Print("Usage: " + os.Args[0] + " <port>\nOn default port " + port + "\n")
 	}
-	listen, err := net.Listen("tcp", "0.0.0.0:"+port)
+	listenAddr, _ := net.ResolveTCPAddr("tcp", "0.0.0.0:"+port)
+	listen, err := net.ListenTCP("tcp", listenAddr)
 	if err != nil {
 		fmt.Printf("listen failed, error code = %v\n", err)
 		return
 	}
 	defer listen.Close()
+	fmt.Printf("listening on port %v\n", port)
 	for {
-		conn, err := listen.Accept()
+		conn, err := listen.AcceptTCP()
 		if err != nil {
 			fmt.Printf("accept failed, error code = %v\n", err)
 			continue

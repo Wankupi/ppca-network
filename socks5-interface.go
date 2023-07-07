@@ -9,7 +9,7 @@ type socksConn interface {
 	run()
 }
 
-func newSocksConn(conn_type string, client net.Conn, addr string, port uint16) (socksConn, error) {
+func newSocksConn(conn_type string, client *net.TCPConn, addr string, port uint16) (socksConn, error) {
 	if conn_type == "tcp" {
 		return newSocksConnTCP(client, addr, port)
 	} else if conn_type == "bind" {

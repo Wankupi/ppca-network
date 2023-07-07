@@ -16,7 +16,7 @@ type socksUDP struct {
 	port      uint16
 }
 
-func newSocksConnUDP(client net.Conn, addr string, port uint16) (socksConn, error) {
+func newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
 	var udp_addr = &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0, Zone: ""}
 	server, err := net.ListenUDP("udp", udp_addr)
 	if err != nil {

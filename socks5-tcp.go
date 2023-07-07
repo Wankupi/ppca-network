@@ -3,18 +3,22 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
-	"time"
 )
 
 type socksTCP struct {
-	client net.Conn
-	server net.Conn
+	client *net.TCPConn
+	server *net.TCPConn
 }
 
-func newSocksConnTCP(client net.Conn, addr string, port uint16) (socksConn, error) {
-	server, err := net.DialTimeout("tcp", addr+":"+fmt.Sprint(port), time.Duration(5)*time.Second)
+func newSocksConnTCP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
+	raddr, err := net.ResolveTCPAddr("tcp", addr+fmt.Sprintf(":%v", port))
+	var server *net.TCPConn
+	if err == nil {
+		server, err = net.DialTCP("tcp", nil, raddr)
+	}
 	if err != nil {
 		var fail_type byte
 		if strings.Contains(err.Error(), "refused") {
@@ -31,7 +35,6 @@ func newSocksConnTCP(client net.Conn, addr string, port uint16) (socksConn, erro
 		client.Write([]byte{0x05, fail_type})
 		return nil, errors.New("dial failed, code: " + err.Error())
 	}
-
 	err = sendBackAddr(client, server.LocalAddr())
 	if err != nil {
 		return nil, errors.New("send back addr failed, code: " + err.Error())
@@ -41,5 +44,14 @@ func newSocksConnTCP(client net.Conn, addr string, port uint16) (socksConn, erro
 }
 
 func (socks *socksTCP) run() {
-	forward_and_close(socks.client, socks.server)
+	A := socks.client
+	B := socks.server
+	go func() {
+		io.CopyBuffer(A, B, make([]byte, 1024))
+		A.CloseWrite()
+		B.CloseRead()
+	}()
+	io.CopyBuffer(B, A, make([]byte, 1024))
+	B.CloseWrite()
+	A.CloseRead()
 }

@@ -7,23 +7,22 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"sync"
 	"time"
 )
 
-func StartConnection(conn net.Conn) {
+func StartConnection(conn *net.TCPConn) {
 	socks, err := hand_shake(conn)
 	if err != nil {
 		fmt.Print("\033[31m", err, "\033[0m\n")
-		conn.Close()
+		conn.CloseWrite()
+		conn.CloseRead()
 		return
 	}
 	go socks.run()
 }
 
-func hand_shake(conn net.Conn) (socks socksConn, err error) {
+func hand_shake(conn *net.TCPConn) (socks socksConn, err error) {
 	var buf [260]byte
-	// conn := bufio.NewReader(conn)
 
 	n, err := io.ReadFull(conn, buf[:2])
 	authSupport := false
@@ -115,7 +114,7 @@ func hand_shake(conn net.Conn) (socks socksConn, err error) {
 	return newSocksConn(net_type, conn, addr, port)
 }
 
-func sendBackAddr(conn net.Conn, addr net.Addr) error {
+func sendBackAddr(conn *net.TCPConn, addr net.Addr) error {
 	localIP_str, localPort_str, err := net.SplitHostPort(addr.String())
 	if err != nil {
 		return err
@@ -127,19 +126,4 @@ func sendBackAddr(conn net.Conn, addr net.Addr) error {
 	res = append(res, localIP...)
 	conn.Write(binary.BigEndian.AppendUint16(res, uint16(localPort)))
 	return nil
-}
-
-func forward_and_close(A net.Conn, B net.Conn) {
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go mycopy(A, B, make([]byte, 1024), &wg)
-	mycopy(B, A, make([]byte, 1024), &wg)
-	wg.Wait()
-	A.Close()
-	B.Close()
-}
-
-func mycopy(dest net.Conn, src net.Conn, buff []byte, wg *sync.WaitGroup) {
-	io.CopyBuffer(dest, src, buff)
-	wg.Done()
 }
