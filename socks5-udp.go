@@ -6,14 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 )
 
 type socksUDP struct {
-	client    net.Conn
-	server    net.UDPConn
-	isLimitIP bool
-	ip        net.IP
-	port      uint16
+	client     *net.TCPConn
+	server     *net.UDPConn
+	relay      *net.UDPConn
+	isLimitIP  bool
+	ip         net.IP
+	port       uint16
+	clientAddr *net.UDPAddr
+	relayAddr  *net.UDPAddr
 }
 
 func newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
@@ -23,7 +27,8 @@ func newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, 
 		client.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		return nil, errors.New("udp listen failed. code: " + err.Error())
 	}
-	fmt.Print(addr, " ", port, " -- ", server.LocalAddr(), "\n")
+
+	// fmt.Print("udp listen from ", addr, " ", port, " -- local=", server.LocalAddr(), "\n")
 
 	err = sendBackAddr(client, server.LocalAddr())
 	if err != nil {
@@ -32,7 +37,7 @@ func newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, 
 	}
 	var udp socksUDP
 	udp.client = client
-	udp.server = *server
+	udp.server = server
 	ip := net.ParseIP(addr)
 	if ip != nil {
 		udp.isLimitIP = true
@@ -47,27 +52,26 @@ func newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, 
 func (socks *socksUDP) run() {
 	defer socks.client.Close()
 	defer socks.server.Close()
-	var server = &socks.server
+	var server = socks.server
 	var buf [1024]byte
 	for {
-		n, addr, err := server.ReadFromUDP(buf[:])
+		n, laddr, err := server.ReadFromUDP(buf[:])
 		if err != nil {
 			fmt.Printf("read from udp client failed, code: %v\n", err.Error())
 			continue
 		}
-		if (socks.isLimitIP && !bytes.Equal(socks.ip, addr.IP.To16())) || (socks.port != 0 && int(socks.port) != addr.Port) {
-			fmt.Print("udp client not wanted.")
-			continue
+		if socks.isLimitIP {
+			if (!bytes.Equal(socks.ip, laddr.IP.To16())) || (socks.port != 0 && socks.port != laddr.AddrPort().Port()) {
+				fmt.Print("udp client not wanted.")
+				continue
+			}
 		}
-		send_udp(buf[:n], addr)
-		break
+		socks.clientAddr = laddr
+		socks.send_udp(buf[:n], laddr)
 	}
 }
 
-func send_udp(msg []byte, addr net.Addr) {
-	fmt.Printf("%v -->\n", addr.String())
-	fmt.Printf("%x\n", msg)
-
+func (socks *socksUDP) send_udp(msg []byte, laddr net.Addr) {
 	if msg[0] != 0x00 || msg[1] != 0x00 {
 		fmt.Print("udp: RSV wrong, not 0x0000.\n")
 		return
@@ -106,15 +110,55 @@ func send_udp(msg []byte, addr net.Addr) {
 	to_port := binary.BigEndian.Uint16(msg[index : index+2])
 	index += 2
 	to_addr += fmt.Sprintf(":%v", to_port)
-	fmt.Print("to addr : ", to_addr, "\n")
 
-	host, err := net.Dial("udp", to_addr)
-	if host != nil {
-		defer host.Close()
-	}
+	rAddr, err := net.ResolveUDPAddr("udp", to_addr)
+
 	if err != nil {
+		fmt.Printf("udp: resolve remote error, code: %v\n", err.Error())
 		return
 	}
-	host.Write(msg[index:])
 
+	if socks.relay == nil {
+		socks.relay, err = net.ListenUDP("udp", nil)
+		if err != nil {
+			fmt.Printf("udp: dial remote error, code: %v\n", err.Error())
+			return
+		}
+	}
+
+	host := socks.relay
+
+	m, err := host.WriteToUDP(msg[index:], rAddr)
+	if err != nil {
+		fmt.Printf("udp: host write fail, \033[31m m=%v  code:%v\033[0m\n", m, err.Error())
+	}
+	if host != nil && socks.relayAddr == nil {
+		// on first send
+		socks.relayAddr = new(net.UDPAddr)
+		HostStr, PortStr, _ := net.SplitHostPort(host.LocalAddr().String())
+		socks.relayAddr.IP = net.ParseIP(HostStr)
+		socks.relayAddr.Port, _ = strconv.Atoi(PortStr)
+		go socks.recv_udp()
+	}
+}
+
+func (socks *socksUDP) recv_udp() {
+	buf := make([]byte, 4096)
+	for {
+		n, raddr, err := socks.relay.ReadFromUDP(buf)
+		if err != nil {
+			break
+		}
+		msg := []byte{0x00, 0x00, 0x00}
+		if raddr.IP.To4() != nil {
+			msg = append(msg, 0x01)
+			msg = append(msg, raddr.IP.To4()...)
+		} else {
+			msg = append(msg, 0x03)
+			msg = append(msg, raddr.IP.To16()...)
+		}
+		msg = binary.BigEndian.AppendUint16(msg, uint16(raddr.Port))
+		msg = append(msg, buf[:n]...)
+		socks.server.WriteToUDP(msg, socks.clientAddr)
+	}
 }
