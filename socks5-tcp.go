@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +36,7 @@ func newSocksConnTCP(client *net.TCPConn, addr string, port uint16) (socksConn, 
 		client.Write([]byte{0x05, fail_type})
 		return nil, errors.New("dial failed, code: " + err.Error())
 	}
-	err = sendBackAddr(client, server.LocalAddr())
+	sendBackAddr(client, server.LocalAddr())
 	if err != nil {
 		return nil, errors.New("send back addr failed, code: " + err.Error())
 	}
@@ -43,7 +44,7 @@ func newSocksConnTCP(client *net.TCPConn, addr string, port uint16) (socksConn, 
 	return &socksTCP{client: client, server: server}, nil
 }
 
-func (socks *socksTCP) run() {
+func (socks *socksTCP) run(ctx context.Context) {
 	A := socks.client
 	B := socks.server
 	go func() {

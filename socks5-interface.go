@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net"
 )
 
 type socksConn interface {
-	run()
+	run(ctx context.Context)
 }
 
 func newSocksConn(conn_type string, client *net.TCPConn, addr string, port uint16) (socksConn, error) {

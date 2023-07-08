@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -11,8 +12,8 @@ import (
 
 type socksUDP struct {
 	client     *net.TCPConn
-	server     *net.UDPConn
-	relay      *net.UDPConn
+	local      *net.UDPConn
+	remote     *net.UDPConn
 	isLimitIP  bool
 	ip         net.IP
 	port       uint16
@@ -21,44 +22,91 @@ type socksUDP struct {
 }
 
 func newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
-	var udp_addr = &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0, Zone: ""}
-	server, err := net.ListenUDP("udp", udp_addr)
+	local, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		client.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-		return nil, errors.New("udp listen failed. code: " + err.Error())
+		return nil, errors.New("udp: error on setup udp to local, code: " + err.Error())
 	}
 
-	// fmt.Print("udp listen from ", addr, " ", port, " -- local=", server.LocalAddr(), "\n")
-
-	err = sendBackAddr(client, server.LocalAddr())
+	remote, err := net.ListenUDP("udp", nil)
 	if err != nil {
-		server.Close()
-		return nil, errors.New("send back addr failed, code: " + err.Error())
+		local.Close()
+		client.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		return nil, errors.New("udp: error on setup udp to remote, code: " + err.Error())
 	}
-	var udp socksUDP
-	udp.client = client
-	udp.server = server
+
+	sendBackAddr(client, local.LocalAddr())
+
+	var socks socksUDP
+	socks.client = client
+	socks.local = local
+	socks.remote = remote
 	ip := net.ParseIP(addr)
 	if ip != nil {
-		udp.isLimitIP = true
-		udp.ip = ip
+		socks.isLimitIP = true
+		socks.ip = ip
 	} else {
-		udp.isLimitIP = false
+		socks.isLimitIP = false
 	}
-	udp.port = port
-	return &udp, nil
+	socks.port = port
+
+	socks.relayAddr = new(net.UDPAddr)
+	HostStr, PortStr, _ := net.SplitHostPort(remote.LocalAddr().String())
+	socks.relayAddr.IP = net.ParseIP(HostStr)
+	socks.relayAddr.Port, _ = strconv.Atoi(PortStr)
+
+	return &socks, nil
 }
 
-func (socks *socksUDP) run() {
+type udp_msg struct {
+	msg   []byte
+	rAddr *net.UDPAddr
+}
+
+func (socks *socksUDP) run(ctx context.Context) {
 	defer socks.client.Close()
-	defer socks.server.Close()
-	var server = socks.server
-	var buf [1024]byte
+	defer socks.local.Close()
+	defer socks.remote.Close()
+	my_ctx, cancel := context.WithCancel(ctx)
+	msg_to_remote := make(chan udp_msg, 1)
+	msg_to_local := make(chan udp_msg, 1)
+	go socks.recieveFromLocal(msg_to_remote, make([]byte, 1024))
+	go socks.recieveFromRemote(msg_to_local, make([]byte, 1024))
+	go func() {
+		buf := make([]byte, 32)
+		for {
+			_, err := socks.client.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+		cancel()
+	}()
 	for {
-		n, laddr, err := server.ReadFromUDP(buf[:])
+		var err error
+		done := false
+		select {
+		case msg := <-msg_to_local:
+			_, err = socks.local.WriteToUDP(msg.msg, msg.rAddr)
+		case msg := <-msg_to_remote:
+			_, err = socks.remote.WriteToUDP(msg.msg, msg.rAddr)
+		case <-my_ctx.Done():
+			done = true
+		}
 		if err != nil {
-			fmt.Printf("read from udp client failed, code: %v\n", err.Error())
-			continue
+			fmt.Println(err.Error())
+		}
+		if done {
+			break
+		}
+	}
+}
+
+func (socks *socksUDP) recieveFromLocal(remote_chan chan udp_msg, buf []byte) {
+	for {
+		n, laddr, err := socks.local.ReadFromUDP(buf)
+		if err != nil {
+			break
 		}
 		if socks.isLimitIP {
 			if (!bytes.Equal(socks.ip, laddr.IP.To16())) || (socks.port != 0 && socks.port != laddr.AddrPort().Port()) {
@@ -66,12 +114,13 @@ func (socks *socksUDP) run() {
 				continue
 			}
 		}
-		socks.clientAddr = laddr
-		socks.send_udp(buf[:n], laddr)
+		socks.clientAddr = laddr // assume there is only one client
+		socks.dealRecvLocalMsg(buf[:n], laddr, remote_chan)
 	}
+	close(remote_chan)
 }
 
-func (socks *socksUDP) send_udp(msg []byte, laddr net.Addr) {
+func (socks *socksUDP) dealRecvLocalMsg(msg []byte, laddr net.Addr, remote_chan chan udp_msg) {
 	if msg[0] != 0x00 || msg[1] != 0x00 {
 		fmt.Print("udp: RSV wrong, not 0x0000.\n")
 		return
@@ -117,35 +166,12 @@ func (socks *socksUDP) send_udp(msg []byte, laddr net.Addr) {
 		fmt.Printf("udp: resolve remote error, code: %v\n", err.Error())
 		return
 	}
-
-	if socks.relay == nil {
-		socks.relay, err = net.ListenUDP("udp", nil)
-		if err != nil {
-			fmt.Printf("udp: dial remote error, code: %v\n", err.Error())
-			return
-		}
-	}
-
-	host := socks.relay
-
-	m, err := host.WriteToUDP(msg[index:], rAddr)
-	if err != nil {
-		fmt.Printf("udp: host write fail, \033[31m m=%v  code:%v\033[0m\n", m, err.Error())
-	}
-	if host != nil && socks.relayAddr == nil {
-		// on first send
-		socks.relayAddr = new(net.UDPAddr)
-		HostStr, PortStr, _ := net.SplitHostPort(host.LocalAddr().String())
-		socks.relayAddr.IP = net.ParseIP(HostStr)
-		socks.relayAddr.Port, _ = strconv.Atoi(PortStr)
-		go socks.recv_udp()
-	}
+	remote_chan <- udp_msg{msg[index:], rAddr}
 }
 
-func (socks *socksUDP) recv_udp() {
-	buf := make([]byte, 4096)
+func (socks *socksUDP) recieveFromRemote(local_chan chan udp_msg, buf []byte) {
 	for {
-		n, raddr, err := socks.relay.ReadFromUDP(buf)
+		n, raddr, err := socks.remote.ReadFromUDP(buf)
 		if err != nil {
 			break
 		}
@@ -159,6 +185,7 @@ func (socks *socksUDP) recv_udp() {
 		}
 		msg = binary.BigEndian.AppendUint16(msg, uint16(raddr.Port))
 		msg = append(msg, buf[:n]...)
-		socks.server.WriteToUDP(msg, socks.clientAddr)
+		local_chan <- udp_msg{msg, socks.clientAddr}
 	}
+	close(local_chan)
 }

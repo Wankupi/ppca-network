@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -10,7 +11,7 @@ import (
 	"time"
 )
 
-func StartConnection(conn *net.TCPConn) {
+func StartConnection(ctx context.Context, conn *net.TCPConn) {
 	socks, err := hand_shake(conn)
 	if err != nil {
 		fmt.Print("\033[31m", err, "\033[0m\n")
@@ -18,7 +19,7 @@ func StartConnection(conn *net.TCPConn) {
 		conn.CloseRead()
 		return
 	}
-	go socks.run()
+	go socks.run(ctx)
 }
 
 func hand_shake(conn *net.TCPConn) (socks socksConn, err error) {
@@ -114,16 +115,11 @@ func hand_shake(conn *net.TCPConn) (socks socksConn, err error) {
 	return newSocksConn(net_type, conn, addr, port)
 }
 
-func sendBackAddr(conn *net.TCPConn, addr net.Addr) error {
-	localIP_str, localPort_str, err := net.SplitHostPort(addr.String())
-	if err != nil {
-		return err
-	}
+func sendBackAddr(conn *net.TCPConn, addr net.Addr) {
+	localIP_str, localPort_str, _ := net.SplitHostPort(addr.String())
 	localIP := net.ParseIP(localIP_str)
 	localPort, _ := strconv.Atoi(localPort_str)
-
 	res := []byte{0x05, 0x00, 0x00, 0x04}
 	res = append(res, localIP...)
 	conn.Write(binary.BigEndian.AppendUint16(res, uint16(localPort)))
-	return nil
 }

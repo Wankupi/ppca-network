@@ -1,12 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
+	"strings"
 )
 
 func main() {
+	root_ctx, cancelAll := context.WithCancel(context.Background())
+	stop_chan := make(chan os.Signal)
+	signal.Notify(stop_chan, os.Interrupt)
+
 	port := "10000" // default
 	if len(os.Args) >= 2 {
 		port = os.Args[1]
@@ -19,14 +26,23 @@ func main() {
 		fmt.Printf("listen failed, error code = %v\n", err)
 		return
 	}
-	defer listen.Close()
+
+	go func() {
+		<-stop_chan
+		cancelAll()
+		listen.Close()
+	}()
+
 	fmt.Printf("listening on port %v\n", port)
 	for {
 		conn, err := listen.AcceptTCP()
 		if err != nil {
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				break
+			}
 			fmt.Printf("accept failed, error code = %v\n", err)
 			continue
 		}
-		go StartConnection(conn)
+		go StartConnection(root_ctx, conn)
 	}
 }
