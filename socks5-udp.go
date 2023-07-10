@@ -68,10 +68,8 @@ func (socks *socksUDP) run(ctx context.Context) {
 	defer socks.local.Close()
 	defer socks.remote.Close()
 	my_ctx, cancel := context.WithCancel(ctx)
-	msg_to_remote := make(chan udp_msg, 1)
-	msg_to_local := make(chan udp_msg, 1)
-	go socks.recieveFromLocal(msg_to_remote, make([]byte, 1024))
-	go socks.recieveFromRemote(msg_to_local, make([]byte, 1024))
+	go socks.recieveFromLocal(make([]byte, 1024))
+	go socks.recieveFromRemote(make([]byte, 1024))
 	go func() {
 		buf := make([]byte, 32)
 		for {
@@ -82,27 +80,12 @@ func (socks *socksUDP) run(ctx context.Context) {
 		}
 		cancel()
 	}()
-	for {
-		var err error
-		done := false
-		select {
-		case msg := <-msg_to_local:
-			_, err = socks.local.WriteToUDP(msg.msg, msg.rAddr)
-		case msg := <-msg_to_remote:
-			_, err = socks.remote.WriteToUDP(msg.msg, msg.rAddr)
-		case <-my_ctx.Done():
-			done = true
-		}
-		if err != nil {
-			fmt.Println(err.Error())
-		}
-		if done {
-			break
-		}
+	select {
+	case <-my_ctx.Done():
 	}
 }
 
-func (socks *socksUDP) recieveFromLocal(remote_chan chan udp_msg, buf []byte) {
+func (socks *socksUDP) recieveFromLocal(buf []byte) {
 	for {
 		n, laddr, err := socks.local.ReadFromUDP(buf)
 		if err != nil {
@@ -115,12 +98,11 @@ func (socks *socksUDP) recieveFromLocal(remote_chan chan udp_msg, buf []byte) {
 			}
 		}
 		socks.clientAddr = laddr // assume there is only one client
-		socks.dealRecvLocalMsg(buf[:n], laddr, remote_chan)
+		socks.dealRecvLocalMsg(buf[:n], laddr)
 	}
-	close(remote_chan)
 }
 
-func (socks *socksUDP) dealRecvLocalMsg(msg []byte, laddr net.Addr, remote_chan chan udp_msg) {
+func (socks *socksUDP) dealRecvLocalMsg(msg []byte, laddr net.Addr) {
 	if msg[0] != 0x00 || msg[1] != 0x00 {
 		fmt.Print("udp: RSV wrong, not 0x0000.\n")
 		return
@@ -166,10 +148,10 @@ func (socks *socksUDP) dealRecvLocalMsg(msg []byte, laddr net.Addr, remote_chan 
 		fmt.Printf("udp: resolve remote error, code: %v\n", err.Error())
 		return
 	}
-	remote_chan <- udp_msg{msg[index:], rAddr}
+	socks.remote.WriteToUDP(msg[index:], rAddr)
 }
 
-func (socks *socksUDP) recieveFromRemote(local_chan chan udp_msg, buf []byte) {
+func (socks *socksUDP) recieveFromRemote(buf []byte) {
 	for {
 		n, raddr, err := socks.remote.ReadFromUDP(buf)
 		if err != nil {
@@ -185,7 +167,6 @@ func (socks *socksUDP) recieveFromRemote(local_chan chan udp_msg, buf []byte) {
 		}
 		msg = binary.BigEndian.AppendUint16(msg, uint16(raddr.Port))
 		msg = append(msg, buf[:n]...)
-		local_chan <- udp_msg{msg, socks.clientAddr}
+		socks.local.WriteToUDP(msg, socks.clientAddr)
 	}
-	close(local_chan)
 }
