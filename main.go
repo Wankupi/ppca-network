@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
+	"main/socks5"
 	"os"
 	"os/signal"
-	"strings"
+	"strconv"
 )
 
 func main() {
@@ -20,29 +20,17 @@ func main() {
 	} else {
 		fmt.Print("Usage: " + os.Args[0] + " <port>\nOn default port " + port + "\n")
 	}
-	listenAddr, _ := net.ResolveTCPAddr("tcp", "0.0.0.0:"+port)
-	listen, err := net.ListenTCP("tcp", listenAddr)
-	if err != nil {
-		fmt.Printf("listen failed, error code = %v\n", err)
-		return
-	}
+	Port, _ := strconv.Atoi(port)
 
 	go func() {
 		<-stop_chan
 		cancelAll()
-		listen.Close()
 	}()
 
-	fmt.Printf("listening on port %v\n", port)
-	for {
-		conn, err := listen.AcceptTCP()
-		if err != nil {
-			if strings.Contains(err.Error(), "use of closed network connection") {
-				break
-			}
-			fmt.Printf("accept failed, error code = %v\n", err)
-			continue
-		}
-		go StartConnection(root_ctx, conn)
+	s5, err := socks5.Listen("0.0.0.0", uint16(Port))
+	if err != nil {
+		fmt.Println("failed to listen socks5, code: ", err.Error())
+		return
 	}
+	s5.Accept(root_ctx)
 }

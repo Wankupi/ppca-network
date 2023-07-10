@@ -1,4 +1,4 @@
-package main
+package socks5
 
 import (
 	"bytes"
@@ -68,8 +68,8 @@ func (socks *socksUDP) run(ctx context.Context) {
 	defer socks.local.Close()
 	defer socks.remote.Close()
 	my_ctx, cancel := context.WithCancel(ctx)
-	go socks.recieveFromLocal(make([]byte, 1024))
-	go socks.recieveFromRemote(make([]byte, 1024))
+	go socks.receiveFromLocal(make([]byte, 1024))
+	go socks.receiveFromRemote(make([]byte, 1024))
 	go func() {
 		buf := make([]byte, 32)
 		for {
@@ -85,7 +85,7 @@ func (socks *socksUDP) run(ctx context.Context) {
 	}
 }
 
-func (socks *socksUDP) recieveFromLocal(buf []byte) {
+func (socks *socksUDP) receiveFromLocal(buf []byte) {
 	for {
 		n, laddr, err := socks.local.ReadFromUDP(buf)
 		if err != nil {
@@ -151,7 +151,7 @@ func (socks *socksUDP) dealRecvLocalMsg(msg []byte, laddr net.Addr) {
 	socks.remote.WriteToUDP(msg[index:], rAddr)
 }
 
-func (socks *socksUDP) recieveFromRemote(buf []byte) {
+func (socks *socksUDP) receiveFromRemote(buf []byte) {
 	for {
 		n, raddr, err := socks.remote.ReadFromUDP(buf)
 		if err != nil {

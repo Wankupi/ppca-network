@@ -1,4 +1,4 @@
-package main
+package socks5
 
 import (
 	"context"
@@ -6,12 +6,46 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"main/inter"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
-func StartConnection(ctx context.Context, conn *net.TCPConn) {
+type socks5server struct {
+	listener *net.TCPListener
+}
+
+func Listen(addr string, port uint16) (inter.InboundServer, error) {
+	listenAddr, _ := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", addr, port))
+	listen, err := net.ListenTCP("tcp", listenAddr)
+	if err != nil {
+		return nil, err
+	}
+	return &socks5server{listen}, nil
+}
+
+func (server *socks5server) Accept(ctx context.Context) {
+	go func() {
+		<-ctx.Done()
+		server.listener.Close()
+	}()
+	for {
+		conn, err := server.listener.AcceptTCP()
+		if err != nil {
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				break
+			}
+			fmt.Printf("accept failed, error code = %v\n", err)
+			continue
+		}
+		go startConnection(ctx, conn)
+	}
+	server.listener.Close()
+}
+
+func startConnection(ctx context.Context, conn *net.TCPConn) {
 	socks, err := hand_shake(conn)
 	if err != nil {
 		fmt.Print("\033[31m", err, "\033[0m\n")
