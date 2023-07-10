@@ -162,7 +162,7 @@ func (socks *socksUDP) recieveFromRemote(buf []byte) {
 			msg = append(msg, 0x01)
 			msg = append(msg, raddr.IP.To4()...)
 		} else {
-			msg = append(msg, 0x03)
+			msg = append(msg, 0x04)
 			msg = append(msg, raddr.IP.To16()...)
 		}
 		msg = binary.BigEndian.AppendUint16(msg, uint16(raddr.Port))
