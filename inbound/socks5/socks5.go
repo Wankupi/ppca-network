@@ -6,27 +6,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"main/inter"
+	"main/inbound"
+	"main/outbound"
+	"main/route"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type socks5server struct {
+type Socks5Listener struct {
 	listener *net.TCPListener
+	router   route.Route
 }
 
-func Listen(addr string, port uint16) (inter.InboundServer, error) {
+func NewSock5Listner(addr string, port uint16, router route.Route) (inbound.InboundServer, error) {
 	listenAddr, _ := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", addr, port))
 	listen, err := net.ListenTCP("tcp", listenAddr)
 	if err != nil {
 		return nil, err
 	}
-	return &socks5server{listen}, nil
+	return &Socks5Listener{listen, router}, nil
 }
 
-func (server *socks5server) Accept(ctx context.Context) {
+func (server *Socks5Listener) Accept(ctx context.Context) {
 	go func() {
 		<-ctx.Done()
 		server.listener.Close()
@@ -40,13 +43,13 @@ func (server *socks5server) Accept(ctx context.Context) {
 			fmt.Printf("accept failed, error code = %v\n", err)
 			continue
 		}
-		go startConnection(ctx, conn)
+		go server.startConnection(ctx, conn)
 	}
 	server.listener.Close()
 }
 
-func startConnection(ctx context.Context, conn *net.TCPConn) {
-	socks, err := hand_shake(conn)
+func (server *Socks5Listener) startConnection(ctx context.Context, conn *net.TCPConn) {
+	socks, err := server.hand_shake(conn)
 	if err != nil {
 		fmt.Print("\033[31m", err, "\033[0m\n")
 		conn.CloseWrite()
@@ -56,7 +59,7 @@ func startConnection(ctx context.Context, conn *net.TCPConn) {
 	go socks.run(ctx)
 }
 
-func hand_shake(conn *net.TCPConn) (socks socksConn, err error) {
+func (server *Socks5Listener) hand_shake(conn *net.TCPConn) (socks socksConn, err error) {
 	var buf [260]byte
 
 	n, err := io.ReadFull(conn, buf[:2])
@@ -146,10 +149,10 @@ func hand_shake(conn *net.TCPConn) (socks socksConn, err error) {
 	}
 	fmt.Printf("[%v] %v:%v\n", time.Now().Format("15:04:05.000"), addr, port)
 
-	return newSocksConn(net_type, conn, addr, port)
+	return server.newSocksConn(net_type, conn, addr, port)
 }
 
-func sendBackAddr(conn *net.TCPConn, addr net.Addr) {
+func sendBackAddr(conn outbound.OutboundConnTCP, addr net.Addr) {
 	localIP_str, localPort_str, _ := net.SplitHostPort(addr.String())
 	localIP := net.ParseIP(localIP_str)
 	localPort, _ := strconv.Atoi(localPort_str)

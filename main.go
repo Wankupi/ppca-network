@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
-	"main/socks5"
+	"main/inbound/socks5"
+	"main/route"
 	"os"
 	"os/signal"
 	"strconv"
@@ -26,8 +27,8 @@ func main() {
 		<-stop_chan
 		cancelAll()
 	}()
-
-	s5, err := socks5.Listen("0.0.0.0", uint16(Port))
+	router := route.DirectRouter{}
+	s5, err := socks5.NewSock5Listner("0.0.0.0", uint16(Port), router)
 	if err != nil {
 		fmt.Println("failed to listen socks5, code: ", err.Error())
 		return

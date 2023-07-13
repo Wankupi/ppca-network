@@ -3,23 +3,24 @@ package socks5
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
+	"main/outbound"
 	"net"
 	"strings"
 )
 
 type socksTCP struct {
 	client *net.TCPConn
-	server *net.TCPConn
+	server outbound.OutboundConnTCP
 }
 
-func newSocksConnTCP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
-	raddr, err := net.ResolveTCPAddr("tcp", addr+fmt.Sprintf(":%v", port))
-	var server *net.TCPConn
-	if err == nil {
-		server, err = net.DialTCP("tcp", nil, raddr)
-	}
+func (listener *Socks5Listener) newSocksConnTCP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
+	// raddr, err := net.ResolveTCPAddr("tcp", addr+fmt.Sprintf(":%v", port))
+	// var server *net.TCPConn
+	// if err == nil {
+	// 	server, err = net.DialTCP("tcp", nil, raddr)
+	// }
+	server, err := listener.router.RoutingDomain(addr, port)
 	if err != nil {
 		var fail_type byte
 		if strings.Contains(err.Error(), "refused") {

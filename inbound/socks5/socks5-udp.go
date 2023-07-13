@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"main/outbound"
 	"net"
 	"strconv"
 )
@@ -13,7 +14,7 @@ import (
 type socksUDP struct {
 	client     *net.TCPConn
 	local      *net.UDPConn
-	remote     *net.UDPConn
+	remote     outbound.OutboundConnUDP
 	isLimitIP  bool
 	ip         net.IP
 	port       uint16
@@ -21,14 +22,15 @@ type socksUDP struct {
 	relayAddr  *net.UDPAddr
 }
 
-func newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
+func (listener *Socks5Listener) newSocksConnUDP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
 	local, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		client.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		return nil, errors.New("udp: error on setup udp to local, code: " + err.Error())
 	}
 
-	remote, err := net.ListenUDP("udp", nil)
+	// remote, err := net.ListenUDP("udp", nil)
+	remote, err := listener.router.RoutingUDP()
 	if err != nil {
 		local.Close()
 		client.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
