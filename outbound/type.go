@@ -17,3 +17,7 @@ type OutboundConnUDP interface {
 	WriteToUDP(b []byte, addr *net.UDPAddr) (int, error)
 	Close() error
 }
+
+type OutboundConnRawIP interface {
+	Write(b []byte) error
+}

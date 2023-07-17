@@ -22,5 +22,9 @@ func (dr DirectRouter) RoutingIP(ip net.IP, port uint16) (outbound.OutboundConnT
 }
 
 func (dr DirectRouter) RoutingUDP() (outbound.OutboundConnUDP, error) {
-	return outbound.NewDirectUDPwithIP()
+	return outbound.NewDirectUDP()
+}
+
+func (dr DirectRouter) RoutingRawIP() (outbound.OutboundConnRawIP, error) {
+	return outbound.NewDirectIP()
 }
