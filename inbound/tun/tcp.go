@@ -3,7 +3,6 @@ package tun
 import (
 	"fmt"
 	"main/outbound"
-	socks5_out "main/outbound/socks5"
 	"math/rand"
 	"net"
 
@@ -52,28 +51,29 @@ func send_tcp_ipv4(src net.IP, dst net.IP, pack *layers.TCP) {
 	buf := gopacket.NewSerializeBuffer()
 	opts := gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}
 	err := gopacket.SerializeLayers(buf, opts,
-		&ip_back, pack)
+		&ip_back, pack, gopacket.Payload(pack.Payload))
 	if err != nil {
 		fmt.Println("\033[31m", "serialize error ", err.Error(), "\033[0m")
 	}
-	fmt.Println("write: ", buf.Bytes())
-
 	out, err := outbound.NewDirectIP()
-	out.Write(buf.Bytes())
+	if err == nil {
+		err = out.Write(buf.Bytes())
+	}
 	if err != nil {
 		fmt.Println("\033[31m", "send back msg error: ", err.Error(), "\033[0m")
 	}
 }
 
 type tcpConn struct {
-	SrcIP    net.IP
-	SrcPort  uint16
-	DstIP    net.IP
-	DstPort  uint16
-	sendHead uint32
-	recvHead uint32
-	status   uint8 // 0 --SYN-> 1 --ACK-> 2 --FIN-> 3 --ACK-> 4
-	relay    outbound.OutboundConnTCP
+	SrcIP                            net.IP
+	SrcPort                          uint16
+	DstIP                            net.IP
+	DstPort                          uint16
+	sendHead                         uint32
+	recvHead                         uint32
+	setup                            bool
+	myFin, heFin, myAckFin, heAckFin bool
+	relay                            outbound.OutboundConnTCP
 }
 
 func (t tcpConn) Close() {
@@ -84,6 +84,13 @@ func (t tcpConn) Close() {
 }
 
 func (ts *tunServer) dealTCP(conn *tcpConn, pack *layers.TCP, key [36]byte) *layers.TCP {
+	_, exist := ts.tcpConns[key]
+	if !exist {
+		if !pack.SYN {
+			return nil
+		}
+		ts.tcpConns[key] = conn
+	}
 	need_reply := false
 	conn.recvHead = pack.Seq + max(uint32(len(pack.Payload)), 1)
 	backpack := layers.TCP{
@@ -105,54 +112,53 @@ func (ts *tunServer) dealTCP(conn *tcpConn, pack *layers.TCP, key [36]byte) *lay
 		Urgent:     0,
 		Options:    nil,
 		Padding:    nil}
-	if conn.status == 0 && !pack.SYN {
-		return nil
-	}
 	if pack.SYN {
 		need_reply = true
 		backpack.SYN = true
 		backpack.Seq = rand.Uint32()
 		conn.sendHead = backpack.Seq + 1
-		conn.status = 1
 	}
+
 	if pack.ACK {
-		if conn.status == 1 {
+		if !conn.setup {
+			conn.setup = true
 			var err error
-			conn.relay, err = socks5_out.NewSocks5TCP(false, conn.DstIP, uint16(conn.DstPort), net.ParseIP("127.0.0.1"), 1089)
+			conn.relay, err = ts.router.RoutingIP(conn.DstIP, uint16(conn.DstPort))
 			if err != nil {
-				conn.status = 4
+				return nil
 			}
 			go ts.relayRemoteToLocal(conn)
-			fmt.Print("\nhhhhhhhhhhhhhhhhhhhhh\n")
 		}
-		if conn.status != 2 {
-			conn.status += 1
+		if conn.myFin {
+			conn.heAckFin = true
 		}
 	}
 
 	if pack.FIN {
-		need_reply = true
 		backpack.FIN = true
-		conn.status += 1
+		conn.heFin = true
+		conn.myFin = true
+		need_reply = !conn.myAckFin
+		conn.myAckFin = true
 	}
 
 	if pack.Payload != nil && len(pack.Payload) > 0 {
 		need_reply = true
-		fmt.Printf("<\033[33m%v\033[0m>\n", string(pack.Payload))
 		_, err := conn.relay.Write(pack.Payload)
 		if err != nil {
-			fmt.Println("????")
+			if !conn.myFin {
+				backpack.FIN = true
+				conn.myFin = true
+			}
 		}
 	}
+
 	if pack.RST {
-		conn.status = 4
+		conn.heFin, conn.myFin, conn.heAckFin, conn.myAckFin = true, true, true, true
 		need_reply = false
 	}
-	if conn.status >= 4 {
-		if conn.relay != nil {
-			conn.relay.Close()
-		}
-		conn.relay = nil
+	if conn.heFin && conn.myFin && conn.heAckFin && conn.myAckFin {
+		conn.Close()
 		delete(ts.tcpConns, key)
 	}
 	if need_reply {
@@ -163,12 +169,11 @@ func (ts *tunServer) dealTCP(conn *tcpConn, pack *layers.TCP, key [36]byte) *lay
 }
 
 func (ts *tunServer) relayRemoteToLocal(conn *tcpConn) {
-	fmt.Print("start relay.\n")
 	pack := layers.TCP{
 		SrcPort:    layers.TCPPort(conn.DstPort),
 		DstPort:    layers.TCPPort(conn.SrcPort),
 		Seq:        conn.sendHead,
-		Ack:        conn.recvHead,
+		Ack:        0,
 		DataOffset: 0,
 		FIN:        false,
 		SYN:        false,
@@ -178,6 +183,7 @@ func (ts *tunServer) relayRemoteToLocal(conn *tcpConn) {
 		ECE:        false,
 		CWR:        false,
 		NS:         false,
+		PSH:        false,
 		Window:     64240,
 		Checksum:   0, // auto calc
 		Urgent:     0,
@@ -187,10 +193,8 @@ func (ts *tunServer) relayRemoteToLocal(conn *tcpConn) {
 	for {
 		n, err := conn.relay.Read(buf)
 		if err != nil {
-			fmt.Println("error in socks5 relay: ", err.Error())
 			break
 		}
-		fmt.Printf("[\033[33m%v\033[0m]\n", string(buf[:n]))
 		pack.Payload = buf[:n]
 		pack.Seq = conn.sendHead
 		conn.sendHead += uint32(n)
@@ -199,9 +203,11 @@ func (ts *tunServer) relayRemoteToLocal(conn *tcpConn) {
 	}
 	pack.FIN = true
 	pack.Seq = conn.sendHead
+	conn.sendHead += 1
 	pack.Ack = conn.recvHead
 	pack.Payload = nil
-	conn.status += 1
-	send_tcp(conn.DstIP, conn.SrcIP, &pack)
-	fmt.Print("end relay.\n")
+	if !conn.myFin {
+		conn.myFin = true
+		send_tcp(conn.DstIP, conn.SrcIP, &pack)
+	}
 }

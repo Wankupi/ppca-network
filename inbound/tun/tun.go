@@ -73,8 +73,6 @@ func (ts *tunServer) dealIPv4(data []byte) {
 		return
 	}
 
-	fmt.Println("\033[32m", ipv4.SrcIP, tcp.SrcPort, ", ", ipv4.DstIP, tcp.DstPort, "\033[0m")
-
 	var key [36]byte
 	copy(key[:32], append(ipv4.SrcIP, ipv4.DstIP...))
 	copy(key[32:34], binary.BigEndian.AppendUint16([]byte{}, uint16(tcp.SrcPort)))
@@ -84,7 +82,6 @@ func (ts *tunServer) dealIPv4(data []byte) {
 	if !exist {
 		conn = &tcpConn{SrcIP: ipv4.SrcIP, DstIP: ipv4.DstIP,
 			SrcPort: uint16(tcp.SrcPort), DstPort: uint16(tcp.DstPort)}
-		ts.tcpConns[key] = conn
 	}
 
 	tcp_back := ts.dealTCP(conn, tcp, key)
