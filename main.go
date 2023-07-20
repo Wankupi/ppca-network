@@ -3,46 +3,56 @@ package main
 import (
 	"context"
 	"fmt"
-	"main/inbound/socks5"
-	"main/inbound/tun"
+	"main/config"
+	"main/inbound"
 	"main/route"
-	"net"
 	"os"
 	"os/signal"
-	"strconv"
 )
 
+var Inbounds map[string]inbound.InboundServer
+var Routers map[string]route.Route
+var Outbounds map[string]config.OutboundConfig
+
 func main() {
+	con, err := config.GetConfig("config.json")
+	if err != nil {
+		fmt.Println("load config error. ", err.Error())
+		return
+	}
+
+	Inbounds = make(map[string]inbound.InboundServer)
+	Routers = make(map[string]route.Route)
+	Outbounds = make(map[string]config.OutboundConfig)
+
+	for _, oc := range con.Outbound {
+		Outbounds[oc.Tag] = oc
+	}
+	for _, rc := range con.Route {
+		var ocs []config.OutboundConfig
+		for _, s := range rc.Outs {
+			ocs = append(ocs, Outbounds[s])
+		}
+		Routers[rc.Tag] = route.NewBalanceRouter(ocs)
+	}
+
 	root_ctx, cancelAll := context.WithCancel(context.Background())
 	stop_chan := make(chan os.Signal)
 	signal.Notify(stop_chan, os.Interrupt)
 
-	port := "10000" // default
-	if len(os.Args) >= 2 {
-		port = os.Args[1]
-	} else {
-		fmt.Print("Usage: " + os.Args[0] + " <port>\nOn default port " + port + "\n")
+	for _, ic := range con.Inbound {
+		rou, exi := Routers[ic.Route]
+		if !exi {
+			fmt.Println("router [", ic.Route, "] not found, on [", ic.Tag, "]")
+		}
+		server, err := NewInboundServer(ic, rou)
+		if err != nil {
+			fmt.Printf("failed to start server [ %v ]\n", ic.Tag)
+			continue
+		}
+		go server.Accept(root_ctx)
 	}
-	Port, _ := strconv.Atoi(port)
 
-	go func() {
-		<-stop_chan
-		cancelAll()
-	}()
-	// router := route.DirectRouter{}
-	router := &route.Socks5Router{IP: net.ParseIP("127.0.0.1"), Port: 1089}
-	s5, err := socks5.NewSock5Listner("0.0.0.0", uint16(Port), router)
-	if err != nil {
-		fmt.Println("failed to listen socks5, code: ", err.Error())
-		return
-	}
-	go s5.Accept(root_ctx)
-
-	tun, err := tun.Listen("tun1", router)
-	if err != nil {
-		fmt.Println("failed to listen tun device, code: ", err.Error())
-		return
-	}
-	go tun.Accept(root_ctx)
-	<-root_ctx.Done()
+	<-stop_chan
+	cancelAll()
 }

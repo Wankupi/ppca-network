@@ -35,7 +35,6 @@ func Listen(deviceName string, router route.Route) (inbound.InboundServer, error
 	if errno != 0 {
 		return nil, errors.New("error ioctl(TunSetIff), code: " + unix.ErrnoName(errno))
 	}
-	fmt.Println("hello")
 	return &tunServer{file, router, make(map[[36]byte]*tcpConn)}, nil
 }
 

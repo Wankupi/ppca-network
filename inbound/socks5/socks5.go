@@ -20,8 +20,8 @@ type Socks5Listener struct {
 	router   route.Route
 }
 
-func NewSock5Listner(addr string, port uint16, router route.Route) (inbound.InboundServer, error) {
-	listenAddr, _ := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", addr, port))
+func NewSock5Listner(addr string, router route.Route) (inbound.InboundServer, error) {
+	listenAddr, _ := net.ResolveTCPAddr("tcp", addr)
 	listen, err := net.ListenTCP("tcp", listenAddr)
 	if err != nil {
 		return nil, err

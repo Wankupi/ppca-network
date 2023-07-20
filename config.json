@@ -1,0 +1,37 @@
+{
+	"inbound": [
+		{
+			"tag": "socks5",
+			"protocol": "socks5",
+			"listen": ":8080",
+			"route": "route-default"
+		},
+		{
+			"tag": "tun",
+			"protocol": "tun",
+			"listen": "tun1",
+			"route": "route-default"
+		}
+	],
+	"outbound": [
+		{
+			"protocol": "socks5",
+			"addrs": [
+				{
+					"ip": "127.0.0.1",
+					"port": 1089
+				}
+			],
+			"tag": "out-default",
+			"mark": 0
+		}
+	],
+	"route": [
+		{
+			"tag": "route-default",
+			"outs": [
+				"out-default"
+			]
+		}
+	]
+}

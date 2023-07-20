@@ -5,6 +5,7 @@ import (
 	"main/outbound"
 	"math/rand"
 	"net"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -90,6 +91,7 @@ func (ts *tunServer) dealTCP(conn *tcpConn, pack *layers.TCP, key [36]byte) *lay
 			return nil
 		}
 		ts.tcpConns[key] = conn
+		fmt.Printf("[%v] %v:%v\n", time.Now().Format("15:04:05.000"), conn.DstIP.String(), conn.DstPort)
 	}
 	need_reply := false
 	conn.recvHead = pack.Seq + max(uint32(len(pack.Payload)), 1)
@@ -123,7 +125,7 @@ func (ts *tunServer) dealTCP(conn *tcpConn, pack *layers.TCP, key [36]byte) *lay
 		if !conn.setup {
 			conn.setup = true
 			var err error
-			conn.relay, err = ts.router.RoutingIP(conn.DstIP, uint16(conn.DstPort))
+			conn.relay, err = ts.router.RoutingTCP(conn.DstIP.String(), uint16(conn.DstPort))
 			if err != nil {
 				return nil
 			}

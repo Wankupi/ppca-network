@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"fmt"
 	"net"
 	"syscall"
 )
@@ -14,6 +15,19 @@ func NewDirectTCPwithIP(ip net.IP, port uint16) (DirectTCP, error) {
 		return nil, err
 	}
 	return conn, nil
+}
+
+func NewDirectTCP(addr string, port uint16) (DirectTCP, error) {
+	ip := net.ParseIP(addr)
+	if ip != nil {
+		return NewDirectTCPwithIP(ip, port)
+	} else {
+		raddr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%v:%v", addr, port))
+		if err != nil {
+			return nil, err
+		}
+		return NewDirectTCPwithIP(raddr.IP, port)
+	}
 }
 
 type DirectUDP = *net.UDPConn

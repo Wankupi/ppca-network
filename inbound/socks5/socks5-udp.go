@@ -29,8 +29,7 @@ func (listener *Socks5Listener) newSocksConnUDP(client *net.TCPConn, addr string
 		return nil, errors.New("udp: error on setup udp to local, code: " + err.Error())
 	}
 
-	// remote, err := net.ListenUDP("udp", nil)
-	remote, err := listener.router.RoutingUDP()
+	remote, err := listener.router.RoutingUDP(addr, port)
 	if err != nil {
 		local.Close()
 		client.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})

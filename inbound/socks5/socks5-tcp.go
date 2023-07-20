@@ -15,7 +15,7 @@ type socksTCP struct {
 }
 
 func (listener *Socks5Listener) newSocksConnTCP(client *net.TCPConn, addr string, port uint16) (socksConn, error) {
-	server, err := listener.router.RoutingDomain(addr, port)
+	server, err := listener.router.RoutingTCP(addr, port)
 	if err != nil {
 		var fail_type byte
 		if strings.Contains(err.Error(), "refused") {
@@ -44,11 +44,11 @@ func (socks *socksTCP) run(ctx context.Context) {
 	A := socks.client
 	B := socks.server
 	go func() {
-		io.CopyBuffer(A, B, make([]byte, 1024))
+		io.CopyBuffer(A, B, make([]byte, 1024*32))
 		A.CloseWrite()
 		B.CloseRead()
 	}()
-	io.CopyBuffer(B, A, make([]byte, 1024))
+	io.CopyBuffer(B, A, make([]byte, 1024*32))
 	B.CloseWrite()
 	A.CloseRead()
 }
